@@ -1,4 +1,5 @@
 moderngl
-glm
+PyGLM
 numpy
 moderngl_window
+pywavefront
