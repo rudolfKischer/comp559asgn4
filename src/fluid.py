@@ -9,13 +9,17 @@ import pdb
 from numba import jit
 
 # @jit(nopython=True)
-def gauss_seidel_poisson(p, div, iterations, tolerance=1e-5):
+def gauss_seidel_poisson(p, div, iterations, tolerance=1e-6):
     p_new = np.zeros_like(p)
     for i in range(iterations):
         p_new[1:-1, 1:-1] = (div[1:-1, 1:-1] +
                       p[:-2, 1:-1] + p[2:, 1:-1] + 
                       p[1:-1, :-2] + p[1:-1, 2:]) / 4
         # get total diff
+        # p_new[0,:] = p_new[-2,:]
+        # p_new[-1,:] = p_new[1,:]
+        # p_new[:,0] = p_new[:,-2]
+        # p_new[:,-1] = p[:,1]
         diff = np.sum(np.abs(p_new - p)) 
         p[:] = p_new
         # print('diff:', diff, 'its:', i)
@@ -24,7 +28,7 @@ def gauss_seidel_poisson(p, div, iterations, tolerance=1e-5):
     return p
 
 # @jit(nopython=True)
-def gauss_seidel_diffuse(q0, q1, a, its, tolerance=1e-5):
+def gauss_seidel_diffuse(q0, q1, a, its, tolerance=1e-6):
     '''Gauss-Seidel solver for diffusion equation with early stopping.'''
     q_temp = np.zeros_like(q1)
     for i in range(its):
@@ -34,6 +38,8 @@ def gauss_seidel_diffuse(q0, q1, a, its, tolerance=1e-5):
         # print('diff:', diff, 'its:', i)
         if diff < tolerance:
             break
+        # set boundary condition
+        
     return q1
 
 
@@ -63,8 +69,8 @@ class HelloWorld(mglw.WindowConfig):
 
   # nx = 32 # TODO: Change the resolution to different sizes in testing!
   # ny = 16
-  nx = 32
-  ny = 16
+  nx = 128
+  ny = 64
 
 
   pix_per_cell = 1024/(nx+4) # Set the cell size to get a nice window size 
@@ -79,7 +85,7 @@ class HelloWorld(mglw.WindowConfig):
 
   color_samples = 5 # sample temperature colours at a higher resolution than the grid for better visualisation
 
-  wrapping_boundary = True
+  wrapping_boundary = False
 
   yl = -1.0
   yh =  1.0
@@ -89,7 +95,7 @@ class HelloWorld(mglw.WindowConfig):
   xh =  dx*nx/2.0 
 
   mouse_strength = 2.1
-  source_strength = 0.2
+  source_strength = 0.9
 
   gravity_enabled = False
   gravity = 0.1
@@ -103,11 +109,11 @@ class HelloWorld(mglw.WindowConfig):
   step_request = False
   reset_request = False
   running = False
-  num_particles = 10000
+  num_particles = 5000
 
   point_size = 3.0
 
-  iterations = 10
+  iterations = 100
 
   dt = 0.01    # time step (control with up and down arrows)
   viscosity = 0.01 # viscosity of fluid (diffuision of velocities) (control with 1 and 2 keys)
@@ -318,6 +324,9 @@ class HelloWorld(mglw.WindowConfig):
         print("Buoyancy force control:", self.beta)
       if key == self.wnd.keys.DELETE:
         self.sources = []
+      # set the wrapping boundary
+      if key == self.wnd.keys.W:
+        self.wrapping_boundary = not self.wrapping_boundary
         
   def mouse_press_event(self, x, y, button):
     xx, yy = self.mouse_to_xy(x, y)
@@ -405,7 +414,7 @@ class HelloWorld(mglw.WindowConfig):
     a = dt * kappa * (self.nx * self.ny)
     q_1 = np.copy(q0)
 
-    q_1 = gauss_seidel_diffuse(q0, q_1, a, self.iterations)
+    q_1 = self.gauss_seidel_diffuse(q0, q_1, a, self.iterations)
     self.set_boundary(q_1, boundary_type)
     
     return q_1
@@ -442,16 +451,18 @@ class HelloWorld(mglw.WindowConfig):
     if "vertical" is boundary_type:
       # horizontal component should be 0 on the vertical boundaries
       # apply antisymmetric boundary conditions
-      # q[0,:] = -q[1,:]
-      # q[-1,:] = -q[-2,:]
-      q[0,:] = 0
-      q[-1,:] = 0
+      q[0,:] = -q[1,:]
+      q[-1,:] = -q[-2,:]
+      # q[0,:] = 0
+      # q[-1,:] = 0
     
     if "horizontal" is boundary_type:
       # vertical component should be 0 on the horizontal boundaries
       # apply antisymmetric boundary conditions
-      q[:,0] = 0
-      q[:,-1] = 0
+      # q[:,0] = 0
+      # q[:,-1] = 0
+      q[:,0] = -q[:,1]
+      q[:,-1] = -q[:,-2]
 
 
     
@@ -629,14 +640,12 @@ class HelloWorld(mglw.WindowConfig):
     self.set_boundary(self.curr_v[:,:,1], "horizontal")
 
 
+
     return # return nothing, this should modify the velocity field in place
 
   def scalar_step(self, dt):
     '''Advects and diffuses the temperature field.'''
-    # modify the tempreture field in the horizontal direction
-    self.next_tp = self.advect(self.curr_tp, dt, self.curr_v, None)
-    self.curr_tp = self.diffuse(self.next_tp, self.kappa, dt, None)
-    # modify the tempreture field in the vertical direction
+    # modify the tempreture field in
     self.next_tp = self.advect(self.curr_tp, dt, self.curr_v, None)
     self.curr_tp = self.diffuse(self.next_tp, self.kappa, dt, None)
 
@@ -655,6 +664,8 @@ class HelloWorld(mglw.WindowConfig):
     self.curr_v = self.diffuse(self.curr_v, self.viscosity, dt, None)
     self.project()
 
+    # apply boundary conditions
+
     # self.curr_v = self.advect(self.curr_v, dt, self.curr_v, None)
     # advect horizontal and then vertical
     self.curr_v[:,:,0] = self.advect(self.curr_v[:,:,0], dt, self.curr_v[:,:,:], None)
@@ -668,6 +679,46 @@ class HelloWorld(mglw.WindowConfig):
     self.set_boundary(self.curr_v[:,:,1], "vertical")
 
     return # return nothing, this should modify the velocity field in place
+  
+  def gauss_seidel_poisson(self, p, div, iterations, tolerance=1e-6):
+    p_new = np.zeros_like(p)
+    for i in range(iterations):
+        p_new[1:-1, 1:-1] = (div[1:-1, 1:-1] +
+                      p[:-2, 1:-1] + p[2:, 1:-1] + 
+                      p[1:-1, :-2] + p[1:-1, 2:]) / 4
+        # get total diff
+        # p_new[0,:] = p_new[-2,:]
+        # p_new[-1,:] = p_new[1,:]
+        # p_new[:,0] = p_new[:,-2]
+        # p_new[:,-1] = p[:,1]
+        diff = np.sum(np.abs(p_new - p)) 
+        p[:] = p_new
+        # print('diff:', diff, 'its:', i)
+        if diff < tolerance:
+            break
+        
+        self.set_boundary(p, None)
+        self.set_boundary(p, None)
+
+    return p
+  
+  def gauss_seidel_diffuse(self, q0, q1, a, its, tolerance=1e-6):
+    '''Gauss-Seidel solver for diffusion equation with early stopping.'''
+    q_temp = np.zeros_like(q1)
+    for i in range(its):
+        q_temp[1:-1, 1:-1] = (q0[1:-1, 1:-1] + a * (q1[:-2, 1:-1] + q1[2:, 1:-1] + q1[1:-1, :-2] + q1[1:-1, 2:])) / (1 + 4 * a)
+        diff = np.sum(np.abs(q1 - q_temp)) 
+        q1[:] = q_temp
+        # print('diff:', diff, 'its:', i)
+        if diff < tolerance:
+            break
+        # set boundary condition
+        self.set_boundary(q1, 'vertical')
+        self.set_boundary(q1, 'horizontal')
+        
+    return q1
+  
+
 
   # Projection step to make the velocity field divergence free
   def project(self):
@@ -678,23 +729,24 @@ class HelloWorld(mglw.WindowConfig):
                        self.curr_v[1:-1, 2:, 0] - self.curr_v[1:-1, 0:-2, 0])
     p = np.zeros_like(div)
 
-    self.set_boundary(div, None)
-    self.set_boundary(p, None)
+    p = np.pad(p, ((1, 1), (1, 1)), mode='constant')
+    div = np.pad(div, ((1, 1), (1, 1)), mode='constant')
+    # self.set_boundary(div, None)
+    # self.set_boundary(p, None)
 
     # Use Numba for optimizing Gauss-Seidel iterations
-    p = gauss_seidel_poisson(p, div, self.iterations)  * 0.9
+    p = self.gauss_seidel_poisson(p, div, self.iterations)
 
     # pad the pressure field
-    p = np.pad(p, ((1, 1), (1, 1)), mode='constant')
+
 
     self.set_boundary(p, None)
-
     # Vectorize velocity correction
     self.curr_v[1:self.ny+1, 1:self.nx+1, 0] -= 0.5 * (p[1:-1, 2:] - p[1:-1, 0:-2]) / h
     self.curr_v[1:self.ny+1, 1:self.nx+1, 1] -= 0.5 * (p[2:, 1:-1] - p[0:-2, 1:-1]) / h
 
-    self.set_boundary(self.curr_v[:,:,0], None)
-    self.set_boundary(self.curr_v[:,:,1], None)
+    self.set_boundary(self.curr_v[:,:,1], "vertical")
+    self.set_boundary(self.curr_v[:,:,0], "horizontal")
 
 
   # def project(self):
